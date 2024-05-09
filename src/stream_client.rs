@@ -201,7 +201,7 @@ impl StreamClient {
                     }
                 }
                 Err(e) => {
-                    info!("Error connecting to server {}: {}", self.server, e);
+                    error!("Error connecting to server {}: {}", self.server, e);
                     thread::sleep(Duration::from_secs(5));
                     continue;
                 }
