@@ -2,10 +2,11 @@ use byteorder::{BigEndian, ByteOrder};
 use std::convert::From;
 use std::io::{self, ErrorKind};
 use std::io::{Read, Write};
-use std::net::TcpStream;
+// use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -139,7 +140,7 @@ pub enum ClientError {
 pub struct StreamClient {
     server: String, // Server address to connect IP:port
     stream_type: StreamType,
-    conn: TcpStream,
+    conn: Option<TcpStream>,
     id: String,         // Client id
     started: bool,      // Flag client started
     connected: bool,    // Flag client connected to server
@@ -156,7 +157,7 @@ impl StreamClient {
         let client = StreamClient {
             server: server.clone(),
             stream_type: StreamType::Sequencer,
-            conn: TcpStream::connect(server.clone())?,
+            conn: None,
             id: String::new(),
             started: false,
             connected: false,
@@ -175,7 +176,7 @@ impl StreamClient {
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Connect to server
         self.connect_server()?;
-        self.exec_command_start(0)?;
+        // self.exec_command_start(0)?;
         self.read_entries().await;
 
         Ok(())
@@ -188,8 +189,9 @@ impl StreamClient {
             match TcpStream::connect(&self.server) {
                 Ok(conn) => {
                     // Connected
+                    self.conn = Some(conn);
                     self.connected = true;
-                    self.id = conn.local_addr()?.to_string();
+                    self.id = self.conn.as_ref().unwrap().local_addr()?.to_string();
                     info!("{} Connected to server: {}", self.id, self.server);
 
                     // Restore streaming
@@ -220,12 +222,13 @@ impl StreamClient {
     }
 
     async fn read_entries(&mut self) {
-        let mut packet = vec![0u8; 1];
+        let mut packet = [0u8; 1];
 
         // Get the command result
-        self.conn
-            .read_to_end(&mut packet)
-            .expect("Error reading packet");
+        let mut conn = self.conn.as_ref().unwrap();
+
+        let ip = conn.peer_addr().unwrap().ip().to_string();
+        conn.read_exact(&mut packet).expect("Error reading packet");
 
         match packet[0] {
             0 => {
@@ -345,14 +348,14 @@ impl StreamClient {
             ));
         }
 
+        let mut conn = self.conn.as_ref().unwrap();
+
         // Send command
-        self.conn
-            .write_all(&(cmd as u64).to_le_bytes())
+        conn.write_all(&(cmd as u64).to_le_bytes())
             .expect("Error sending command");
 
         // Send stream type
-        self.conn
-            .write_all(&(self.stream_type as u64).to_le_bytes())
+        conn.write_all(&(self.stream_type as u64).to_le_bytes())
             .expect("Error sending stream type");
 
         // Send the command parameters
@@ -360,41 +363,34 @@ impl StreamClient {
             Command::CmdStart => {
                 info!("{} ...from entry {}", self.id, from_entry);
                 // Send starting/from entry number
-                self.conn
-                    .write_all(&from_entry.to_le_bytes())
+                conn.write_all(&from_entry.to_le_bytes())
                     .expect("Error sending Start command");
             }
             Command::CmdStartBookmark => {
                 info!("{} ...from bookmark {:?}", self.id, from_bookmark);
                 // Send starting/from bookmark length
                 if let Some(bookmark) = &from_bookmark {
-                    self.conn
-                        .write_all(&(bookmark.len() as u32).to_le_bytes())
+                    conn.write_all(&(bookmark.len() as u32).to_le_bytes())
                         .expect("Error sending StartBookmark command");
                     // Send starting/from bookmark
-                    self.conn
-                        .write_all(bookmark)
+                    conn.write_all(bookmark)
                         .expect("Error sending from bookmark");
                 }
             }
             Command::CmdEntry => {
                 info!("{} ...get entry {}", self.id, from_entry);
                 // Send entry to retrieve
-                self.conn
-                    .write_all(&from_entry.to_le_bytes())
+                conn.write_all(&from_entry.to_le_bytes())
                     .expect("Error sending entry");
             }
             Command::CmdBookmark => {
                 info!("{} ...get bookmark {:?}", self.id, from_bookmark);
                 // Send bookmark length
                 if let Some(bookmark) = &from_bookmark {
-                    self.conn
-                        .write_all(&(bookmark.len() as u32).to_le_bytes())
+                    conn.write_all(&(bookmark.len() as u32).to_le_bytes())
                         .expect("Error sending bookmark length");
                     // Send bookmark to retrieve
-                    self.conn
-                        .write_all(bookmark)
-                        .expect("Error sending bookmark");
+                    conn.write_all(bookmark).expect("Error sending bookmark");
                 }
             }
             _ => {}
@@ -402,9 +398,7 @@ impl StreamClient {
 
         // Get the command result
         let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
-        self.conn
-            .read_to_end(&mut buf)
-            .expect("Error reading response");
+        conn.read_to_end(&mut buf).expect("Error reading response");
 
         // Get the data response and update streaming flag
         match cmd {
@@ -515,7 +509,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_stream_client_new() {
-        let server = "stream.zkevm-rpc.com:6900".to_string();
+        let server = "127.0.0.1:7900".to_string(); // "stream.zkevm-rpc.com:6900".to_string();
         let stream_type = StreamType::Sequencer;
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
