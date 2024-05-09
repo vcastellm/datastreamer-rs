@@ -1,11 +1,11 @@
+use byteorder::{BigEndian, ByteOrder};
+use std::convert::From;
+use std::io::{self, ErrorKind};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
-use std::io::{self, ErrorKind};
-use byteorder::{ByteOrder, BigEndian};
-use std::convert::From;
 
 // Buffers for the channels
 const RESULTS_BUFFER: usize = 32;
@@ -37,11 +37,20 @@ pub struct HeaderEntry {
     total_entries: u64,      // Total number of data entries (packet type PtData)
 }
 
+// ResultEntry type for a result entry
+#[derive(Debug, Default)]
+pub struct ResultEntry {
+    packet_type: u8, // 0xff:Result
+    length: u32,
+    error_num: u32, // 0:No error
+    error_str: Vec<u8>,
+}
+
 // EntryType enum represents the entry event types
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum EntryType {
     #[default]
-    NotFound = 0,    // EntryTypeNotFound for entry not found
+    NotFound = 0, // EntryTypeNotFound for entry not found
     Bookmark = 0xb0, // EntryTypeBookmark for bookmark entry
     Event1 = 1,      // EntryTypeEvent1 for event type 1
     Event2 = 2,      // EntryTypeEvent2 for event type 2
@@ -223,7 +232,10 @@ impl StreamClient {
     }
 
     // exec_command_start_bookmark executes client TCP command to start streaming from bookmark
-    pub fn exec_command_start_bookmark(&mut self, from_bookmark: Vec<u8>) -> Result<(), ClientError> {
+    pub fn exec_command_start_bookmark(
+        &mut self,
+        from_bookmark: Vec<u8>,
+    ) -> Result<(), ClientError> {
         match self.exec_command(Command::CmdStartBookmark, 0, Some(from_bookmark)) {
             Ok(_) => Ok(()),
             Err(e) => Err(e),
@@ -255,7 +267,10 @@ impl StreamClient {
     }
 
     // exec_command_get_bookmark executes client TCP command to get a bookmark
-    pub fn exec_command_get_bookmark(&mut self, from_bookmark: Vec<u8>) -> Result<Entry, ClientError> {
+    pub fn exec_command_get_bookmark(
+        &mut self,
+        from_bookmark: Vec<u8>,
+    ) -> Result<Entry, ClientError> {
         match self.exec_command(Command::CmdBookmark, 0, Some(from_bookmark)) {
             Ok((_, entry)) => Ok(entry),
             Err(e) => Err(e),
@@ -338,7 +353,9 @@ impl StreamClient {
 
         // Get the command result
         let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
-        self.conn.read_to_end(&mut buf).expect("Error reading response");
+        self.conn
+            .read_to_end(&mut buf)
+            .expect("Error reading response");
 
         // Get the data response and update streaming flag
         match cmd {
@@ -360,14 +377,14 @@ impl StreamClient {
             Command::CmdEntry => {
                 let e = decode_binary_to_file_entry(&mut buf).expect("Error decoding entry");
                 if e.entry_type == EntryType::NotFound {
-                    return Err(ClientError::EntryNotFound)
+                    return Err(ClientError::EntryNotFound);
                 }
                 entry = e;
             }
             Command::CmdBookmark => {
                 let e = decode_binary_to_file_entry(&mut buf).expect("Error decoding bookmark");
                 if e.entry_type == EntryType::NotFound {
-                     return Err(ClientError::BookmarkNotFound)
+                    return Err(ClientError::BookmarkNotFound);
                 }
                 entry = e;
             }
@@ -380,7 +397,10 @@ impl StreamClient {
 // decode_binary_to_header_entry decodes from binary bytes slice to a header entry type
 fn decode_binary_to_header_entry(b: &[u8]) -> io::Result<HeaderEntry> {
     if b.len() != HEADER_SIZE {
-        return Err(io::Error::new(ErrorKind::InvalidData, "Invalid binary header entry"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "Invalid binary header entry",
+        ));
     }
 
     let packet_type = b[0];
@@ -405,7 +425,10 @@ fn decode_binary_to_header_entry(b: &[u8]) -> io::Result<HeaderEntry> {
 // decode_binary_to_file_entry decodes from binary bytes slice to file entry type
 fn decode_binary_to_file_entry(b: &[u8]) -> io::Result<Entry> {
     if b.len() < FIXED_SIZE_FILE_ENTRY {
-        return Err(io::Error::new(ErrorKind::InvalidData, "Invalid binary data entry"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "Invalid binary data entry",
+        ));
     }
 
     let packet_type = b[0];
@@ -415,7 +438,10 @@ fn decode_binary_to_file_entry(b: &[u8]) -> io::Result<Entry> {
     let data = b[17..].to_vec();
 
     if data.len() as u32 != length - FIXED_SIZE_FILE_ENTRY as u32 {
-        return Err(io::Error::new(ErrorKind::InvalidData, "Error decoding binary data entry"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "Error decoding binary data entry",
+        ));
     }
 
     Ok(Entry {
