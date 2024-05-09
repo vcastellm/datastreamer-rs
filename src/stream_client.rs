@@ -6,6 +6,8 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::sync::mpsc;
+use tracing::{error, info};
 
 // Buffers for the channels
 const RESULTS_BUFFER: usize = 32;
@@ -104,6 +106,16 @@ impl From<u64> for StreamType {
     }
 }
 
+// PacketType enum represents the packet types
+#[derive(Debug, Clone, Copy)]
+pub enum PacketType {
+    PtPadding = 0,    // PtPadding is packet type for pad
+    PtHeader = 1,     // PtHeader is packet type just for the header page
+    PtData = 2,       // PtData is packet type for data entry
+    PtDataRsp = 0xfe, // PtDataRsp is packet type for command response with data
+    PtResult = 0xff, // PtResult is packet type not stored/present in file (just for client command result)
+}
+
 // Type of the callback function to process the received entry
 type ProcessEntryFunc = fn(Entry) -> Result<(), ClientError>;
 
@@ -163,7 +175,8 @@ impl StreamClient {
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Connect to server
         self.connect_server()?;
-        self.read_entries();
+        self.exec_command_start(0)?;
+        self.read_entries().await;
 
         Ok(())
     }
@@ -177,7 +190,7 @@ impl StreamClient {
                     // Connected
                     self.connected = true;
                     self.id = conn.local_addr()?.to_string();
-                    println!("{} Connected to server: {}", self.id, self.server);
+                    info!("{} Connected to server: {}", self.id, self.server);
 
                     // Restore streaming
                     if self.streaming {
@@ -186,7 +199,7 @@ impl StreamClient {
                             Err(e) => {
                                 self.close_connection();
                                 thread::sleep(Duration::from_secs(5));
-                                println!("Error restoring streaming: {:?}", e);
+                                info!("Error restoring streaming: {:?}", e);
                                 self.streaming = false;
                                 continue;
                             }
@@ -197,7 +210,7 @@ impl StreamClient {
                     }
                 }
                 Err(e) => {
-                    println!("Error connecting to server {}: {}", self.server, e);
+                    error!("Error connecting to server {}: {}", self.server, e);
                     thread::sleep(Duration::from_secs(5));
                     continue;
                 }
@@ -206,8 +219,44 @@ impl StreamClient {
         Ok(false)
     }
 
-    async fn read_entries(&self) {
-        // Implement the logic to read entries from the server
+    async fn read_entries(&mut self) {
+        let mut packet = vec![0u8; 1];
+
+        // Get the command result
+        self.conn
+            .read_to_end(&mut packet)
+            .expect("Error reading packet");
+
+        match packet[0] {
+            0 => {
+                info!("Received packet type: {:?}", PacketType::PtPadding);
+            }
+            1 => {
+                info!("Received packet type: {:?}", PacketType::PtHeader);
+            }
+            2 => {
+                info!("Received packet type: {:?}", PacketType::PtData);
+            }
+            0xfe => {
+                info!("Received packet type: {:?}", PacketType::PtDataRsp);
+            }
+            0xff => {
+                info!("Received packet type: {:?}", PacketType::PtResult);
+            }
+            _ => {
+                info!("Received packet type: Unknown");
+            }
+        }
+
+        //     // Create a new channel with a capacity of at most 32.
+        //     let (tx, mut rx) = mpsc::unbounded_channel::<Entry>();
+
+        //     // Start receiving messages
+        // while let Some(entry) = rx.recv().await {
+        //     match entry {
+
+        //     }
+        // }
     }
 
     async fn get_streaming(&self) {
@@ -217,7 +266,7 @@ impl StreamClient {
     // close_connection closes connection to the server
     pub fn close_connection(&mut self) {
         if self.connected {
-            println!("{} Close connection", self.id);
+            info!("{} Close connection", self.id);
             // self.conn.close(); // Uncomment this when you have a connection to close
         }
         self.connected = false;
@@ -284,13 +333,13 @@ impl StreamClient {
         from_entry: u64,
         from_bookmark: Option<Vec<u8>>,
     ) -> Result<(HeaderEntry, Entry), ClientError> {
-        println!("{} Executing command {:?}...", self.id, cmd,);
+        info!("{} Executing command {:?}...", self.id, cmd,);
         let mut header: HeaderEntry = Default::default();
         let mut entry: Entry = Default::default();
 
         // Check status of the client
-        if !self.started {
-            println!("Execute command not allowed. Client is not started");
+        if !self.connected {
+            info!("Execute command not allowed. Client is not started");
             return Err(ClientError::ClientNotStarted(
                 "Execute command not allowed.",
             ));
@@ -309,19 +358,19 @@ impl StreamClient {
         // Send the command parameters
         match cmd {
             Command::CmdStart => {
-                println!("{} ...from entry {}", self.id, from_entry);
+                info!("{} ...from entry {}", self.id, from_entry);
                 // Send starting/from entry number
                 self.conn
                     .write_all(&from_entry.to_le_bytes())
-                    .expect("Error sending from entry");
+                    .expect("Error sending Start command");
             }
             Command::CmdStartBookmark => {
-                println!("{} ...from bookmark {:?}", self.id, from_bookmark);
+                info!("{} ...from bookmark {:?}", self.id, from_bookmark);
                 // Send starting/from bookmark length
                 if let Some(bookmark) = &from_bookmark {
                     self.conn
                         .write_all(&(bookmark.len() as u32).to_le_bytes())
-                        .expect("Error sending from bookmark length");
+                        .expect("Error sending StartBookmark command");
                     // Send starting/from bookmark
                     self.conn
                         .write_all(bookmark)
@@ -329,14 +378,14 @@ impl StreamClient {
                 }
             }
             Command::CmdEntry => {
-                println!("{} ...get entry {}", self.id, from_entry);
+                info!("{} ...get entry {}", self.id, from_entry);
                 // Send entry to retrieve
                 self.conn
                     .write_all(&from_entry.to_le_bytes())
                     .expect("Error sending entry");
             }
             Command::CmdBookmark => {
-                println!("{} ...get bookmark {:?}", self.id, from_bookmark);
+                info!("{} ...get bookmark {:?}", self.id, from_bookmark);
                 // Send bookmark length
                 if let Some(bookmark) = &from_bookmark {
                     self.conn
@@ -454,15 +503,17 @@ fn decode_binary_to_file_entry(b: &[u8]) -> io::Result<Entry> {
 }
 
 fn print_received_entry(entry: Entry) -> Result<(), ClientError> {
-    println!("Received entry: {:?}", entry);
+    info!("Received entry: {:?}", entry);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tracing_test::traced_test;
 
     #[tokio::test]
+    #[traced_test]
     async fn test_stream_client_new() {
         let server = "stream.zkevm-rpc.com:6900".to_string();
         let stream_type = StreamType::Sequencer;
