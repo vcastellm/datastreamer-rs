@@ -16,6 +16,7 @@ const ENTRIES_BUFFER: usize = 128;
 const ENTRY_RSP_BUFFER: usize = 32;
 const HEADER_SIZE: usize = 38;
 const FIXED_SIZE_FILE_ENTRY: usize = 17;
+const FIXED_SIZE_RESULT_ENTRY: usize = 9;
 
 // Entry type for a data file entry
 #[derive(Debug, Default)]
@@ -221,7 +222,38 @@ impl StreamClient {
         Ok(false)
     }
 
-    async fn read_entries(&mut self) {
+    // read_result_entry reads bytes from server connection and returns a result entry type
+    fn read_result_entry(&mut self) -> Result<ResultEntry, std::io::Error> {
+        let mut e = ResultEntry::default();
+
+        let conn = self.conn.as_ref().unwrap();
+
+        // Read the rest of fixed size fields
+        let mut buffer = vec![0; FIXED_SIZE_RESULT_ENTRY - 1];
+        conn.read_exact(&mut buffer)?;
+
+        let packet = vec![PacketType::PtResult as u8];
+        buffer = [packet, buffer].concat();
+
+        // Read variable field (errStr)
+        let length = (&buffer[1..5]).read_u32::<BigEndian>()?;
+        if length < FIXED_SIZE_RESULT_ENTRY as u32 {
+            return Err(std::io::Error::new(ErrorKind::Other, "Error reading result entry"));
+        }
+
+        let mut buffer_aux = vec![0; (length - FIXED_SIZE_RESULT_ENTRY as u32) as usize];
+        conn.read_exact(&mut buffer_aux)?;
+
+        buffer = [buffer, buffer_aux].concat();
+
+        // Decode binary entry result
+        // Assuming DecodeBinaryToResultEntry is defined somewhere
+        e = decode_binary_to_result_entry(&buffer);
+
+        Ok(e)
+    }
+
+    async fn read_entries(&self) {
         let mut packet = [0u8; 1];
 
         // Get the command result
@@ -396,9 +428,14 @@ impl StreamClient {
             _ => {}
         }
 
+        // let mut packet = [0u8; 1];
+
+        // // Get the command result
+        // conn.read_exact(&mut packet).expect("Error reading packet");
+
         // Get the command result
         let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
-        conn.read_to_end(&mut buf).expect("Error reading response");
+        conn.read_exact(&mut buf).expect("Error reading response");
 
         // Get the data response and update streaming flag
         match cmd {
@@ -494,6 +531,23 @@ fn decode_binary_to_file_entry(b: &[u8]) -> io::Result<Entry> {
         number,
         data,
     })
+}
+
+// DecodeBinaryToResultEntry decodes from binary bytes slice to a result entry type
+fn decode_binary_to_result_entry(b: &[u8]) -> ResultEntry {
+    let mut e = ResultEntry::default();
+
+    let packet_type = b[0];
+    let length = BigEndian::read_u32(&b[1..5]);
+    let error_num = BigEndian::read_u32(&b[5..9]);
+    let error_str = b[9..].to_vec();
+
+    e.packet_type = packet_type;
+    e.length = length;
+    e.error_num = error_num;
+    e.error_str = error_str;
+
+    e
 }
 
 fn print_received_entry(entry: Entry) -> Result<(), ClientError> {
