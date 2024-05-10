@@ -229,11 +229,12 @@ impl StreamClient {
         let mut conn = self.conn.as_ref().unwrap();
 
         // Read the rest of fixed size fields
-        let mut buffer = vec![0; FIXED_SIZE_RESULT_ENTRY - 1];
+        let mut buffer = vec![0; FIXED_SIZE_RESULT_ENTRY];
         conn.read_exact(&mut buffer)?;
 
-        let packet = vec![PacketType::PtResult as u8];
-        buffer = [packet, buffer].concat();
+        // TODO: This is not necessary in our impl because we've not read the packet yet so it's there
+        // let packet = vec![PacketType::PtResult as u8];
+        // buffer = [packet, buffer].concat();
 
         // Read variable field (errStr)
         let length = BigEndian::read_u32(&buffer[1..5]);
@@ -254,6 +255,20 @@ impl StreamClient {
         e = decode_binary_to_result_entry(&buffer);
 
         Ok(e)
+    }
+
+    // read_header_entry reads bytes from server connection and returns a header entry type
+    fn read_header_entry(&mut self) -> Result<HeaderEntry, std::io::Error> {
+        let mut conn = self.conn.as_ref().unwrap();
+
+        // Read the rest of fixed size fields
+        let mut buffer = vec![0; HEADER_SIZE];
+        conn.read_exact(&mut buffer)?;
+
+        // Decode binary header entry
+        let h = decode_binary_to_header_entry(&buffer)?;
+
+        Ok(h)
     }
 
     async fn read_entries(&self) {
@@ -386,11 +401,11 @@ impl StreamClient {
         let mut conn = self.conn.as_ref().unwrap();
 
         // Send command
-        conn.write_all(&(cmd as u64).to_le_bytes())
+        conn.write_all(&(cmd as u64).to_be_bytes())
             .expect("Error sending command");
 
         // Send stream type
-        conn.write_all(&(self.stream_type as u64).to_le_bytes())
+        conn.write_all(&(self.stream_type as u64).to_be_bytes())
             .expect("Error sending stream type");
 
         // Send the command parameters
@@ -450,8 +465,9 @@ impl StreamClient {
                 self.streaming = false;
             }
             Command::CmdHeader => {
-                let h = decode_binary_to_header_entry(&mut buf).expect("Error decoding header");
-                header = h;
+                header = self
+                    .read_header_entry()
+                    .expect("Error reading header entry");
                 self.total_entries = header.total_entries;
             }
             Command::CmdEntry => {
@@ -563,7 +579,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_stream_client_new() {
-        let server = "stream.zkevm-rpc.com:6900".to_string(); // "127.0.0.1:6900".to_string();
+        let server = "127.0.0.1:6900".to_string(); // "stream.zkevm-rpc.com:6900".to_string();
         let stream_type = StreamType::Sequencer;
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
