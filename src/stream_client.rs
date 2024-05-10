@@ -2,11 +2,10 @@ use byteorder::{BigEndian, ByteOrder};
 use std::convert::From;
 use std::io::{self, ErrorKind};
 use std::io::{Read, Write};
-// use std::net::TcpStream;
+use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -176,7 +175,8 @@ impl StreamClient {
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Connect to server
         self.connect_server()?;
-        // self.exec_command_start(0)?;
+        
+        let header = self.exec_command_get_header()?;
         self.read_entries().await;
 
         Ok(())
@@ -509,7 +509,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_stream_client_new() {
-        let server = "127.0.0.1:7900".to_string(); // "stream.zkevm-rpc.com:6900".to_string();
+        let server =  "stream.zkevm-rpc.com:6900".to_string(); // "127.0.0.1:6900".to_string();
         let stream_type = StreamType::Sequencer;
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
