@@ -109,12 +109,22 @@ impl From<u64> for StreamType {
 
 // PacketType enum represents the packet types
 #[derive(Debug, Clone, Copy)]
+#[repr(u8)]
 pub enum PacketType {
-    PtPadding = 0,    // PtPadding is packet type for pad
-    PtHeader = 1,     // PtHeader is packet type just for the header page
-    PtData = 2,       // PtData is packet type for data entry
+    PtPadding = 0u8,  // PtPadding is packet type for pad
+    PtHeader = 0x01,  // PtHeader is packet type just for the header page
+    PtData = 0x02,    // PtData is packet type for data entry
     PtDataRsp = 0xfe, // PtDataRsp is packet type for command response with data
     PtResult = 0xff, // PtResult is packet type not stored/present in file (just for client command result)
+}
+
+impl From<u64> for StreamType {
+    fn from(v: u64) -> Self {
+        match v {
+            1 => StreamType::Sequencer,
+            _ => StreamType::Sequencer,
+        }
+    }
 }
 
 // Type of the callback function to process the received entry
@@ -178,6 +188,8 @@ impl StreamClient {
         self.connect_server()?;
 
         let header = self.exec_command_get_header()?;
+        _ = self.exec_command_start(0)?;
+        self.started = true;
         self.read_entries().await;
 
         Ok(())
@@ -271,7 +283,21 @@ impl StreamClient {
         Ok(h)
     }
 
-    async fn read_entries(&self) {
+    // readDataEntry reads bytes from server connection and returns a data entry type
+    fn read_data_entry(&mut self) -> Result<Entry, std::io::Error> {
+        let mut conn = self.conn.as_ref().unwrap();
+
+        // Read the rest of fixed size fields
+        let mut buffer = vec![0; FIXED_SIZE_FILE_ENTRY];
+        conn.read_exact(&mut buffer)?;
+
+        // Decode binary data entry
+        let e = decode_binary_to_file_entry(&buffer)?;
+
+        Ok(e)
+    }
+
+    async fn read_entries(&mut self) {
         let mut packet = [0u8; 1];
 
         // Get the command result
@@ -281,14 +307,16 @@ impl StreamClient {
         conn.read_exact(&mut packet).expect("Error reading packet");
 
         match packet[0] {
-            0 => {
+            PacketType::PtPadding => {
                 info!("Received packet type: {:?}", PacketType::PtPadding);
             }
-            1 => {
+            PacketType::PtHeader => {
                 info!("Received packet type: {:?}", PacketType::PtHeader);
             }
             2 => {
                 info!("Received packet type: {:?}", PacketType::PtData);
+                let e = self.read_data_entry().expect("Error reading data entry");
+                _ = (self.process_entry)(e);
             }
             0xfe => {
                 info!("Received packet type: {:?}", PacketType::PtDataRsp);
@@ -300,16 +328,6 @@ impl StreamClient {
                 info!("Received packet type: Unknown");
             }
         }
-
-        //     // Create a new channel with a capacity of at most 32.
-        //     let (tx, mut rx) = mpsc::unbounded_channel::<Entry>();
-
-        //     // Start receiving messages
-        // while let Some(entry) = rx.recv().await {
-        //     match entry {
-
-        //     }
-        // }
     }
 
     async fn get_streaming(&self) {
