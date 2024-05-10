@@ -1,6 +1,6 @@
 # datastreamer-rs
 
-Efficient, fast, async Rust port of the [zkEVM DataStreamer](https://github.com/0xPolygonHermez/zkevm-data-streamer/)
+Efficient, fast, async [zkEVM DataStreamer](https://github.com/0xPolygonHermez/zkevm-data-streamer/) library in Rust.
 
 ## Intro
 
