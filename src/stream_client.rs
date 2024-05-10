@@ -6,13 +6,8 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tracing::{error, info};
 
-// Buffers for the channels
-const RESULTS_BUFFER: usize = 32;
-const HEADERS_BUFFER: usize = 32;
-const ENTRIES_BUFFER: usize = 128;
 const ENTRY_RSP_BUFFER: usize = 32;
 const HEADER_SIZE: usize = 38;
 const FIXED_SIZE_FILE_ENTRY: usize = 17;
@@ -118,11 +113,15 @@ pub enum PacketType {
     PtResult = 0xff, // PtResult is packet type not stored/present in file (just for client command result)
 }
 
-impl From<u64> for StreamType {
-    fn from(v: u64) -> Self {
+impl From<u8> for PacketType {
+    fn from(v: u8) -> Self {
         match v {
-            1 => StreamType::Sequencer,
-            _ => StreamType::Sequencer,
+            0x00 => PacketType::PtPadding,
+            0x01 => PacketType::PtHeader,
+            0x02 => PacketType::PtData,
+            0xfe => PacketType::PtDataRsp,
+            0xff => PacketType::PtResult,
+            _ => PacketType::PtPadding,
         }
     }
 }
@@ -306,32 +305,30 @@ impl StreamClient {
         let ip = conn.peer_addr().unwrap().ip().to_string();
         conn.read_exact(&mut packet).expect("Error reading packet");
 
-        match packet[0] {
+        match PacketType::from(packet[0]) {
             PacketType::PtPadding => {
                 info!("Received packet type: {:?}", PacketType::PtPadding);
             }
             PacketType::PtHeader => {
                 info!("Received packet type: {:?}", PacketType::PtHeader);
+                let h = self.read_header_entry().expect("Error reading header entry");
+                self.total_entries = h.total_entries;
             }
-            2 => {
+            PacketType::PtData => {
                 info!("Received packet type: {:?}", PacketType::PtData);
                 let e = self.read_data_entry().expect("Error reading data entry");
                 _ = (self.process_entry)(e);
             }
-            0xfe => {
+            PacketType::PtDataRsp => {
                 info!("Received packet type: {:?}", PacketType::PtDataRsp);
             }
-            0xff => {
+            PacketType::PtResult => {
                 info!("Received packet type: {:?}", PacketType::PtResult);
             }
             _ => {
                 info!("Received packet type: Unknown");
             }
         }
-    }
-
-    async fn get_streaming(&self) {
-        // Implement the logic to consume streaming entries
     }
 
     // close_connection closes connection to the server
