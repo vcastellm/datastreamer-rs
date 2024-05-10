@@ -176,7 +176,7 @@ impl StreamClient {
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Connect to server
         self.connect_server()?;
-        
+
         let header = self.exec_command_get_header()?;
         self.read_entries().await;
 
@@ -226,7 +226,7 @@ impl StreamClient {
     fn read_result_entry(&mut self) -> Result<ResultEntry, std::io::Error> {
         let mut e = ResultEntry::default();
 
-        let conn = self.conn.as_ref().unwrap();
+        let mut conn = self.conn.as_ref().unwrap();
 
         // Read the rest of fixed size fields
         let mut buffer = vec![0; FIXED_SIZE_RESULT_ENTRY - 1];
@@ -236,9 +236,12 @@ impl StreamClient {
         buffer = [packet, buffer].concat();
 
         // Read variable field (errStr)
-        let length = (&buffer[1..5]).read_u32::<BigEndian>()?;
+        let length = BigEndian::read_u32(&buffer[1..5]);
         if length < FIXED_SIZE_RESULT_ENTRY as u32 {
-            return Err(std::io::Error::new(ErrorKind::Other, "Error reading result entry"));
+            return Err(std::io::Error::new(
+                ErrorKind::Other,
+                "Error reading result entry",
+            ));
         }
 
         let mut buffer_aux = vec![0; (length - FIXED_SIZE_RESULT_ENTRY as u32) as usize];
@@ -428,16 +431,13 @@ impl StreamClient {
             _ => {}
         }
 
-        // let mut packet = [0u8; 1];
-
-        // // Get the command result
-        // conn.read_exact(&mut packet).expect("Error reading packet");
-
         // Get the command result
-        let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
-        conn.read_exact(&mut buf).expect("Error reading response");
+        let re = self
+            .read_result_entry()
+            .expect("Error reading result entry");
 
         // Get the data response and update streaming flag
+        let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
         match cmd {
             Command::CmdStart => {
                 self.streaming = true;
@@ -563,7 +563,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_stream_client_new() {
-        let server =  "stream.zkevm-rpc.com:6900".to_string(); // "127.0.0.1:6900".to_string();
+        let server = "stream.zkevm-rpc.com:6900".to_string(); // "127.0.0.1:6900".to_string();
         let stream_type = StreamType::Sequencer;
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
