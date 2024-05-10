@@ -24,3 +24,5 @@ The `StreamServer` is under development.
 ## Usage
 
 See the `src/main.rs` file for a quick usage method.
+
+![](./assets/out.gif)

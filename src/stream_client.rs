@@ -187,9 +187,13 @@ impl StreamClient {
         self.connect_server()?;
 
         let header = self.exec_command_get_header()?;
+        self.total_entries = header.total_entries;
+
         _ = self.exec_command_start(0)?;
         self.started = true;
-        self.read_entries().await;
+        loop {
+            self.read_entries().await;
+        }
 
         Ok(())
     }
@@ -282,36 +286,52 @@ impl StreamClient {
         Ok(h)
     }
 
-    // readDataEntry reads bytes from server connection and returns a data entry type
+    // read_data_entry reads bytes from server connection and returns a data entry type
     fn read_data_entry(&mut self) -> Result<Entry, std::io::Error> {
         let mut conn = self.conn.as_ref().unwrap();
 
         // Read the rest of fixed size fields
-        let mut buffer = vec![0; FIXED_SIZE_FILE_ENTRY];
+        let mut buffer = vec![0; FIXED_SIZE_FILE_ENTRY - 1];
         conn.read_exact(&mut buffer)?;
 
+        let packet = vec![PacketType::PtData as u8];
+        buffer = [packet, buffer].concat();
+
+        // Read variable field (errStr)
+        let length = BigEndian::read_u32(&buffer[1..5]);
+        if length < FIXED_SIZE_RESULT_ENTRY as u32 {
+            return Err(std::io::Error::new(
+                ErrorKind::Other,
+                "Error reading result entry",
+            ));
+        }
+
+        let mut buffer_aux = vec![0; (length - FIXED_SIZE_FILE_ENTRY as u32) as usize];
+        conn.read_exact(&mut buffer_aux)?;
+
+        buffer = [buffer, buffer_aux].concat();
+
         // Decode binary data entry
-        let e = decode_binary_to_file_entry(&buffer)?;
+        let e = decode_binary_to_entry(&buffer)?;
 
         Ok(e)
     }
 
     async fn read_entries(&mut self) {
-        let mut packet = [0u8; 1];
-
-        // Get the command result
         let mut conn = self.conn.as_ref().unwrap();
 
-        let ip = conn.peer_addr().unwrap().ip().to_string();
+        // Get the command result
+        let mut packet = [0u8; 1];
         conn.read_exact(&mut packet).expect("Error reading packet");
-
         match PacketType::from(packet[0]) {
             PacketType::PtPadding => {
                 info!("Received packet type: {:?}", PacketType::PtPadding);
             }
             PacketType::PtHeader => {
                 info!("Received packet type: {:?}", PacketType::PtHeader);
-                let h = self.read_header_entry().expect("Error reading header entry");
+                let h = self
+                    .read_header_entry()
+                    .expect("Error reading header entry");
                 self.total_entries = h.total_entries;
             }
             PacketType::PtData => {
@@ -483,17 +503,16 @@ impl StreamClient {
                 header = self
                     .read_header_entry()
                     .expect("Error reading header entry");
-                self.total_entries = header.total_entries;
             }
             Command::CmdEntry => {
-                let e = decode_binary_to_file_entry(&mut buf).expect("Error decoding entry");
+                let e = decode_binary_to_entry(&mut buf).expect("Error decoding entry");
                 if e.entry_type == EntryType::NotFound {
                     return Err(ClientError::EntryNotFound);
                 }
                 entry = e;
             }
             Command::CmdBookmark => {
-                let e = decode_binary_to_file_entry(&mut buf).expect("Error decoding bookmark");
+                let e = decode_binary_to_entry(&mut buf).expect("Error decoding bookmark");
                 if e.entry_type == EntryType::NotFound {
                     return Err(ClientError::BookmarkNotFound);
                 }
@@ -534,7 +553,7 @@ fn decode_binary_to_header_entry(b: &[u8]) -> io::Result<HeaderEntry> {
 }
 
 // decode_binary_to_file_entry decodes from binary bytes slice to file entry type
-fn decode_binary_to_file_entry(b: &[u8]) -> io::Result<Entry> {
+fn decode_binary_to_entry(b: &[u8]) -> io::Result<Entry> {
     if b.len() < FIXED_SIZE_FILE_ENTRY {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
