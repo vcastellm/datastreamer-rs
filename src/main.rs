@@ -1,4 +1,4 @@
-mod stream_client;
+pub mod stream_client;
 
 #[tokio::main]
 async fn main() {

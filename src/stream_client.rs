@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use byteorder::{BigEndian, ByteOrder};
 use std::convert::From;
 use std::io::{self, ErrorKind};
@@ -17,32 +16,32 @@ const FIXED_SIZE_RESULT_ENTRY: usize = 9;
 // Entry type for a data file entry
 #[derive(Debug, Default)]
 pub struct Entry {
-    packet_type: u8,       // 2:Data entry, 0:Padding
-    length: u32,           // Total length of the entry (17 bytes + length(data))
-    entry_type: EntryType, // 0xb0:Bookmark, 1:Event1, 2:Event2,...
-    number: u64,           // Entry number (sequential starting with 0)
-    data: Vec<u8>,
+    pub packet_type: u8,       // 2:Data entry, 0:Padding
+    pub length: u32,           // Total length of the entry (17 bytes + length(data))
+    pub entry_type: EntryType, // 0xb0:Bookmark, 1:Event1, 2:Event2,...
+    pub number: u64,           // Entry number (sequential starting with 0)
+    pub data: Vec<u8>,
 }
 
 // HeaderEntry type for a header entry
 #[derive(Debug, Default)]
 pub struct HeaderEntry {
-    packet_type: u8,         // 1:Header
-    head_length: u32,        // Total length of header entry (38)
-    version: u8,             // Stream file version
-    system_id: u64,          // System identifier (e.g. ChainID)
-    stream_type: StreamType, // 1:Sequencer
-    total_length: u64,       // Total bytes used in the file
-    total_entries: u64,      // Total number of data entries (packet type PtData)
+    pub packet_type: u8,         // 1:Header
+    pub head_length: u32,        // Total length of header entry (38)
+    pub version: u8,             // Stream file version
+    pub system_id: u64,          // System identifier (e.g. ChainID)
+    pub stream_type: StreamType, // 1:Sequencer
+    pub total_length: u64,       // Total bytes used in the file
+    pub total_entries: u64,      // Total number of data entries (packet type PtData)
 }
 
 // ResultEntry type for a result entry
 #[derive(Debug, Default)]
 pub struct ResultEntry {
-    packet_type: u8, // 0xff:Result
-    length: u32,
-    error_num: u32, // 0:No error
-    error_str: Vec<u8>,
+    pub packet_type: u8, // 0xff:Result
+    pub length: u32,
+    pub error_num: u32, // 0:No error
+    pub error_str: Vec<u8>,
 }
 
 // EntryType enum represents the entry event types
@@ -158,7 +157,6 @@ pub struct StreamClient {
     from_stream: u64,   // Start entry number from latest start command
     total_entries: u64, // Total entries from latest header command
 
-    next_entry: u64,                 // Next entry number to receive from streaming
     process_entry: ProcessEntryFunc, // Callback function to process the entry
 }
 
@@ -174,7 +172,6 @@ impl StreamClient {
             streaming: false,
             from_stream: 0,
             total_entries: 0,
-            next_entry: 0,
 
             process_entry: print_received_entry,
         };
@@ -326,10 +323,9 @@ impl StreamClient {
             }
             PacketType::PtHeader => {
                 info!("Received packet type: {:?}", PacketType::PtHeader);
-                let h = self
+                let _h = self
                     .read_header_entry()
                     .expect("Error reading header entry");
-                self.total_entries = h.total_entries;
             }
             PacketType::PtData => {
                 info!("Received packet type: {:?}", PacketType::PtData);
