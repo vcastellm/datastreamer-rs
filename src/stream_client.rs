@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use byteorder::{BigEndian, ByteOrder};
 use std::convert::From;
 use std::io::{self, ErrorKind};
@@ -6,7 +7,7 @@ use std::net::TcpStream;
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 const ENTRY_RSP_BUFFER: usize = 32;
 const HEADER_SIZE: usize = 38;
@@ -194,8 +195,6 @@ impl StreamClient {
         loop {
             self.read_entries().await;
         }
-
-        Ok(())
     }
 
     // connect_server waits until the server connection is established and returns if a command result is pending
@@ -239,8 +238,6 @@ impl StreamClient {
 
     // read_result_entry reads bytes from server connection and returns a result entry type
     fn read_result_entry(&mut self) -> Result<ResultEntry, std::io::Error> {
-        let mut e = ResultEntry::default();
-
         let mut conn = self.conn.as_ref().unwrap();
 
         // Read the rest of fixed size fields
@@ -267,7 +264,7 @@ impl StreamClient {
 
         // Decode binary entry result
         // Assuming DecodeBinaryToResultEntry is defined somewhere
-        e = decode_binary_to_result_entry(&buffer);
+        let e = decode_binary_to_result_entry(&buffer);
 
         Ok(e)
     }
@@ -344,9 +341,6 @@ impl StreamClient {
             }
             PacketType::PtResult => {
                 info!("Received packet type: {:?}", PacketType::PtResult);
-            }
-            _ => {
-                info!("Received packet type: Unknown");
             }
         }
     }
@@ -485,6 +479,7 @@ impl StreamClient {
         let re = self
             .read_result_entry()
             .expect("Error reading result entry");
+        debug!("Result entry: {:?}", re);
 
         // Get the data response and update streaming flag
         let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
