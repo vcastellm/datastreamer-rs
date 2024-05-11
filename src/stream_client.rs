@@ -195,7 +195,7 @@ impl StreamClient {
     }
 
     // connect_server waits until the server connection is established and returns if a command result is pending
-    fn connect_server(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn connect_server(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
         // Connect to server
         while !self.connected {
             match TcpStream::connect(&self.server) {
@@ -475,6 +475,9 @@ impl StreamClient {
         let re = self
             .read_result_entry()
             .expect("Error reading result entry");
+        if re.error_num != CommandError::CmdErrOK as u32 {
+            return Err(ClientError::InvalidCommand("Error executing command"));
+        }
         debug!("Result entry: {:?}", re);
 
         // Get the data response and update streaming flag
@@ -609,6 +612,11 @@ mod tests {
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
         assert_eq!(client.stream_type, stream_type);
+
+        client.connect_server().unwrap();
+
+        let e = client.exec_command_get_bookmark([0u8; 0].to_vec()).unwrap();
+        assert_eq!(e.entry_type, EntryType::Bookmark);
 
         client.start().await.unwrap();
     }
