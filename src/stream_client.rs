@@ -157,7 +157,7 @@ pub struct StreamClient {
     from_stream: u64,   // Start entry number from latest start command
     total_entries: u64, // Total entries from latest header command
 
-    process_entry: ProcessEntryFunc, // Callback function to process the entry
+    pub process_entry_hook: ProcessEntryFunc, // Callback function to process the entry
 }
 
 impl StreamClient {
@@ -173,7 +173,7 @@ impl StreamClient {
             from_stream: 0,
             total_entries: 0,
 
-            process_entry: print_received_entry,
+            process_entry_hook: print_received_entry,
         };
 
         Ok(client)
@@ -280,6 +280,19 @@ impl StreamClient {
         Ok(h)
     }
 
+    // read_bookmark_entry
+    fn read_bookmark_entry(&mut self) -> Result<Entry, std::io::Error> {
+        // Get the command result
+        let mut packet = [0u8; 1];
+        self.conn
+            .as_ref()
+            .unwrap()
+            .read_exact(&mut packet)
+            .expect("Error reading packet");
+
+        self.read_data_entry()
+    }
+
     // read_data_entry reads bytes from server connection and returns a data entry type
     fn read_data_entry(&mut self) -> Result<Entry, std::io::Error> {
         let mut conn = self.conn.as_ref().unwrap();
@@ -330,7 +343,7 @@ impl StreamClient {
             PacketType::PtData => {
                 info!("Received packet type: {:?}", PacketType::PtData);
                 let e = self.read_data_entry().expect("Error reading data entry");
-                _ = (self.process_entry)(e);
+                _ = (self.process_entry_hook)(e);
             }
             PacketType::PtDataRsp => {
                 info!("Received packet type: {:?}", PacketType::PtDataRsp);
@@ -482,7 +495,6 @@ impl StreamClient {
         debug!("Result entry: {:?}", re);
 
         // Get the data response and update streaming flag
-        let mut buf = vec![0u8; ENTRY_RSP_BUFFER];
         match cmd {
             Command::CmdStart => {
                 self.streaming = true;
@@ -507,7 +519,7 @@ impl StreamClient {
                 entry = e;
             }
             Command::CmdBookmark => {
-                let e = self.read_data_entry().expect("Error decoding bookmark");
+                let e = self.read_bookmark_entry().expect("Error decoding bookmark");
                 if e.entry_type == EntryType::NotFound {
                     return Err(ClientError::BookmarkNotFound);
                 }
@@ -608,7 +620,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_stream_client_new() {
-        let server = "127.0.0.1:6900".to_string(); // "stream.zkevm-rpc.com:6900".to_string();
+        let server = "stream.zkevm-rpc.com:6900".to_string(); // "stream.zkevm-rpc.com:6900".to_string();
         let stream_type = StreamType::Sequencer;
         let mut client = StreamClient::new(server.clone()).unwrap();
         assert_eq!(client.server, server);
