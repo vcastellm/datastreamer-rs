@@ -103,7 +103,7 @@ impl From<u64> for StreamType {
 }
 
 // PacketType enum represents the packet types
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum PacketType {
     PtPadding = 0u8,  // PtPadding is packet type for pad
@@ -288,7 +288,7 @@ impl StreamClient {
         let mut buffer = vec![0; FIXED_SIZE_FILE_ENTRY - 1];
         conn.read_exact(&mut buffer)?;
 
-        let packet = vec![PacketType::PtData as u8];
+        let packet = vec![PacketType::PtDataRsp as u8];
         buffer = [packet, buffer].concat();
 
         // Read variable field (errStr)
@@ -438,14 +438,14 @@ impl StreamClient {
             Command::CmdStart => {
                 info!("{} ...from entry {}", self.id, from_entry);
                 // Send starting/from entry number
-                conn.write_all(&from_entry.to_le_bytes())
+                conn.write_all(&from_entry.to_be_bytes())
                     .expect("Error sending Start command");
             }
             Command::CmdStartBookmark => {
                 info!("{} ...from bookmark {:?}", self.id, from_bookmark);
                 // Send starting/from bookmark length
                 if let Some(bookmark) = &from_bookmark {
-                    conn.write_all(&(bookmark.len() as u32).to_le_bytes())
+                    conn.write_all(&(bookmark.len() as u32).to_be_bytes())
                         .expect("Error sending StartBookmark command");
                     // Send starting/from bookmark
                     conn.write_all(bookmark)
@@ -455,14 +455,14 @@ impl StreamClient {
             Command::CmdEntry => {
                 info!("{} ...get entry {}", self.id, from_entry);
                 // Send entry to retrieve
-                conn.write_all(&from_entry.to_le_bytes())
+                conn.write_all(&from_entry.to_be_bytes())
                     .expect("Error sending entry");
             }
             Command::CmdBookmark => {
                 info!("{} ...get bookmark {:?}", self.id, from_bookmark);
                 // Send bookmark length
                 if let Some(bookmark) = &from_bookmark {
-                    conn.write_all(&(bookmark.len() as u32).to_le_bytes())
+                    conn.write_all(&(bookmark.len() as u32).to_be_bytes())
                         .expect("Error sending bookmark length");
                     // Send bookmark to retrieve
                     conn.write_all(bookmark).expect("Error sending bookmark");
@@ -476,7 +476,8 @@ impl StreamClient {
             .read_result_entry()
             .expect("Error reading result entry");
         if re.error_num != CommandError::CmdErrOK as u32 {
-            return Err(ClientError::InvalidCommand("Error executing command"));
+            // TODO string the command
+            return Err(ClientError::InvalidCommand("TODO string the command"));
         }
         debug!("Result entry: {:?}", re);
 
@@ -499,14 +500,14 @@ impl StreamClient {
                     .expect("Error reading header entry");
             }
             Command::CmdEntry => {
-                let e = decode_binary_to_entry(&mut buf).expect("Error decoding entry");
+                let e = self.read_data_entry().expect("Error decoding entry");
                 if e.entry_type == EntryType::NotFound {
                     return Err(ClientError::EntryNotFound);
                 }
                 entry = e;
             }
             Command::CmdBookmark => {
-                let e = decode_binary_to_entry(&mut buf).expect("Error decoding bookmark");
+                let e = self.read_data_entry().expect("Error decoding bookmark");
                 if e.entry_type == EntryType::NotFound {
                     return Err(ClientError::BookmarkNotFound);
                 }
@@ -615,7 +616,9 @@ mod tests {
 
         client.connect_server().unwrap();
 
-        let e = client.exec_command_get_bookmark([0u8; 0].to_vec()).unwrap();
+        let e = client
+            .exec_command_get_bookmark(0u64.to_be_bytes().to_vec())
+            .unwrap();
         assert_eq!(e.entry_type, EntryType::Bookmark);
 
         client.start().await.unwrap();
